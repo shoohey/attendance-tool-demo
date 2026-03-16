@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 出勤簿集計ツール</title>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', 'Hiragino Sans', 'メイリオ', sans-serif;
+            background: #f0f4f8;
+            color: #1a202c;
+            min-height: 100vh;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1e3a5f 0%, #2d6a9f 100%);
+            color: #fff;
+            padding: 28px 0;
+            text-align: center;
+            box-shadow: 0 2px 12px rgba(0,0,0,.15);
+        }
+        .header h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: .04em; }
+        .header p { margin-top: 6px; font-size: .85rem; opacity: .85; }
+        .header .sub { margin-top: 4px; font-size: .72rem; opacity: .5; }
+
+        .container { max-width: 1100px; margin: 0 auto; padding: 32px 20px; }
+
+        /* Upload */
+        .upload-section {
+            background: #fff;
+            border-radius: 16px;
+            padding: 48px 32px;
+            text-align: center;
+            box-shadow: 0 1px 6px rgba(0,0,0,.06);
+            margin-bottom: 28px;
+        }
+        .drop-zone {
+            border: 2.5px dashed #a0c4e8;
+            border-radius: 14px;
+            padding: 56px 24px;
+            cursor: pointer;
+            transition: all .25s;
+            background: #f7fbff;
+        }
+        .drop-zone:hover, .drop-zone.drag-over {
+            border-color: #2d6a9f;
+            background: #eaf3fc;
+            transform: scale(1.005);
+        }
+        .drop-zone-icon { font-size: 3rem; margin-bottom: 12px; }
+        .drop-zone h2 { font-size: 1.15rem; font-weight: 600; color: #2d6a9f; }
+        .drop-zone p { font-size: .82rem; color: #718096; margin-top: 6px; }
+
+        .file-info {
+            display: none;
+            margin-top: 18px;
+            padding: 12px 20px;
+            background: #edf7ed;
+            border-radius: 10px;
+            font-size: .88rem;
+            color: #276749;
+        }
+        .file-info.show { display: block; }
+
+        /* Processing */
+        .processing { display: none; text-align: center; padding: 48px 0; }
+        .processing.show { display: block; }
+        .spinner {
+            width: 48px; height: 48px;
+            border: 4px solid #e2e8f0;
+            border-top-color: #2d6a9f;
+            border-radius: 50%;
+            animation: spin .8s linear infinite;
+            margin: 0 auto 16px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .processing p { color: #4a5568; font-size: .95rem; }
+
+        /* Results */
+        .results-section { display: none; }
+        .results-section.show { display: block; }
+
+        .summary-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .card {
+            background: #fff;
+            border-radius: 14px;
+            padding: 24px;
+            text-align: center;
+            box-shadow: 0 1px 6px rgba(0,0,0,.06);
+        }
+        .card .number { font-size: 2.2rem; font-weight: 700; color: #2d6a9f; }
+        .card .number.small { font-size: 1.15rem; }
+        .card .label { font-size: .82rem; color: #718096; margin-top: 4px; }
+
+        /* Tabs */
+        .tabs-wrapper {
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 1px 6px rgba(0,0,0,.06);
+            overflow: hidden;
+        }
+        .tab-bar { display: flex; border-bottom: 1px solid #e2e8f0; }
+        .tab-btn {
+            flex: 1; padding: 15px 8px; border: none; background: none;
+            font-size: .88rem; font-weight: 600; color: #718096;
+            cursor: pointer; transition: all .2s; position: relative;
+        }
+        .tab-btn:hover { color: #2d6a9f; background: #f7fbff; }
+        .tab-btn.active { color: #2d6a9f; }
+        .tab-btn.active::after {
+            content: ''; position: absolute;
+            bottom: -1px; left: 0; right: 0;
+            height: 3px; background: #2d6a9f;
+            border-radius: 3px 3px 0 0;
+        }
+        .tab-content { display: none; padding: 24px; }
+        .tab-content.active { display: block; }
+
+        /* Tables */
+        .table-scroll { overflow-x: auto; max-height: 520px; overflow-y: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+        thead th {
+            background: #1e3a5f; color: #fff;
+            padding: 11px 12px; text-align: center;
+            font-weight: 600; white-space: nowrap;
+            position: sticky; top: 0; z-index: 1;
+        }
+        tbody td { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; }
+        tbody tr:hover { background: #f7fbff; }
+        tbody tr.multi { background: #fffbeb; }
+        tbody tr.multi:hover { background: #fef3c7; }
+
+        .badge-multi {
+            display: inline-block; background: #f59e0b; color: #fff;
+            font-size: .68rem; padding: 2px 8px; border-radius: 10px; font-weight: 600;
+        }
+        .text-center { text-align: center; }
+        .text-right { text-align: right; }
+        .date-text {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: .78rem; color: #2d3748;
+            word-break: break-all; line-height: 1.6;
+        }
+
+        /* Buttons */
+        .copy-btn {
+            background: none; border: 1px solid #cbd5e0; border-radius: 6px;
+            padding: 3px 10px; font-size: .72rem; color: #4a5568;
+            cursor: pointer; transition: all .2s;
+        }
+        .copy-btn:hover { background: #edf2f7; border-color: #a0aec0; }
+        .copy-btn.copied { background: #c6f6d5; border-color: #68d391; color: #276749; }
+
+        .download-bar { margin-top: 24px; text-align: center; }
+        .btn-download {
+            display: inline-block;
+            background: linear-gradient(135deg, #1e3a5f, #2d6a9f);
+            color: #fff; padding: 14px 40px; border: none; border-radius: 10px;
+            font-size: .95rem; font-weight: 600; cursor: pointer;
+            text-decoration: none; transition: opacity .2s;
+        }
+        .btn-download:hover { opacity: .9; }
+        .btn-reset {
+            display: inline-block; background: #fff; color: #4a5568;
+            padding: 14px 32px; border: 1.5px solid #cbd5e0; border-radius: 10px;
+            font-size: .95rem; font-weight: 600; cursor: pointer;
+            margin-left: 12px; transition: all .2s;
+        }
+        .btn-reset:hover { background: #f7fafc; border-color: #a0aec0; }
+
+        .search-bar { margin-bottom: 16px; }
+        .search-bar input {
+            width: 100%; padding: 11px 16px;
+            border: 1.5px solid #e2e8f0; border-radius: 10px;
+            font-size: .88rem; outline: none; transition: border .2s;
+        }
+        .search-bar input:focus { border-color: #2d6a9f; }
+        .search-bar input::placeholder { color: #a0aec0; }
+
+        .error-msg {
+            display: none; background: #fed7d7; color: #9b2c2c;
+            padding: 16px 24px; border-radius: 10px;
+            margin-top: 18px; font-size: .88rem;
+        }
+        .error-msg.show { display: block; }
+
+        .footer { text-align: center; padding: 32px 0 24px; font-size: .75rem; color: #a0aec0; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>AI 出勤簿集計ツール</h1>
+        <p>出勤簿（Excel）をアップロードするだけで、出勤日数・おしらせ欄用の出勤日を自動集計</p>
+        <p class="sub">Powered by Claude AI</p>
+    </div>
+
+    <div class="container">
+        <div class="upload-section" id="uploadSection">
+            <div class="drop-zone" id="dropZone">
+                <div class="drop-zone-icon">&#128203;</div>
+                <h2>出勤簿ファイルをドラッグ＆ドロップ</h2>
+                <p>または クリックしてファイルを選択（.xlsx）</p>
+                <input type="file" id="fileInput" accept=".xlsx,.xls" hidden>
+            </div>
+            <div class="file-info" id="fileInfo"></div>
+            <div class="error-msg" id="errorMsg"></div>
+        </div>
+
+        <div class="processing" id="processing">
+            <div class="spinner"></div>
+            <p>出勤簿を解析中...</p>
+        </div>
+
+        <div class="results-section" id="resultsSection">
+            <div class="summary-cards">
+                <div class="card">
+                    <div class="number" id="totalPersons">-</div>
+                    <div class="label">従業員数（重複除外）</div>
+                </div>
+                <div class="card">
+                    <div class="number" id="multiCount">-</div>
+                    <div class="label">複数店舗勤務者</div>
+                </div>
+                <div class="card">
+                    <div class="number" id="sheetCount">-</div>
+                    <div class="label">読み取りシート数</div>
+                </div>
+                <div class="card">
+                    <div class="number small" id="periodText">-</div>
+                    <div class="label">対象期間</div>
+                </div>
+            </div>
+
+            <div class="tabs-wrapper">
+                <div class="tab-bar">
+                    <button class="tab-btn active" data-tab="tab-summary">出勤日数 一覧</button>
+                    <button class="tab-btn" data-tab="tab-dates">おしらせ欄用 出勤日</button>
+                </div>
+
+                <div class="tab-content active" id="tab-summary">
+                    <div class="search-bar">
+                        <input type="text" id="searchSummary" placeholder="名前で検索...">
+                    </div>
+                    <div class="table-scroll">
+                        <table>
+                            <thead><tr>
+                                <th>No.</th><th>名前</th><th>出勤日数</th><th>出勤時間</th><th>勤務店舗</th>
+                            </tr></thead>
+                            <tbody id="summaryBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="tab-dates">
+                    <div class="search-bar">
+                        <input type="text" id="searchDates" placeholder="名前で検索...">
+                    </div>
+                    <div class="table-scroll">
+                        <table>
+                            <thead><tr>
+                                <th style="width:50px">No.</th>
+                                <th style="width:150px">名前</th>
+                                <th style="width:70px">日数</th>
+                                <th>おしらせ欄（出勤日）</th>
+                                <th style="width:80px"></th>
+                            </tr></thead>
+                            <tbody id="datesBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="download-bar">
+                <button class="btn-download" id="btnDownload">Excel ダウンロード</button>
+                <button class="btn-reset" id="btnReset">別のファイルを集計</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">出勤簿集計ツール</div>
+
+    <script>
+    // ─── State ───
+    let allResults = [];
+    let lastExcelData = null;
+
+    // ─── DOM ───
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const fileInfo = document.getElementById('fileInfo');
+    const errorMsg = document.getElementById('errorMsg');
+    const uploadSection = document.getElementById('uploadSection');
+    const processing = document.getElementById('processing');
+    const resultsSection = document.getElementById('resultsSection');
+
+    // ─── Drag & Drop ───
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', e => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+        if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+
+    function handleFile(file) {
+        if (!file.name.match(/\.xlsx?$/i)) { showError('Excelファイル（.xlsx）を選択してください'); return; }
+        fileInfo.textContent = `${file.name}（${(file.size / 1024).toFixed(0)} KB）`;
+        fileInfo.classList.add('show');
+        errorMsg.classList.remove('show');
+
+        uploadSection.style.display = 'none';
+        processing.classList.add('show');
+
+        const reader = new FileReader();
+        reader.onload = e => {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const wb = XLSX.read(data, { type: 'array' });
+                const results = processWorkbook(wb);
+                processing.classList.remove('show');
+                allResults = results.employees;
+                renderResults(results);
+                resultsSection.classList.add('show');
+            } catch (err) {
+                processing.classList.remove('show');
+                uploadSection.style.display = 'block';
+                showError('ファイルの解析に失敗しました: ' + err.message);
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+
+    function showError(msg) { errorMsg.textContent = msg; errorMsg.classList.add('show'); }
+
+    // ─── Core: 出勤簿解析 ───
+    function normalizeName(name) {
+        if (!name) return '';
+        let s = String(name).trim();
+        // Normalize fullwidth → halfwidth, CJK compat
+        s = s.normalize('NFKC');
+        // Known kanji variants
+        s = s.replace(/髙/g, '高');
+        // Normalize whitespace
+        s = s.replace(/[\s\u3000]+/g, ' ').trim();
+        return s;
+    }
+
+    const SKIP_NAMES = new Set(['時間予定', '時間合計', '人員合計', '予定']);
+
+    function processWorkbook(wb) {
+        // person (normalized) → { displayName, stores: Set, dates: Map<"M/D" → totalHours> }
+        const persons = {};
+        const sheetNames = wb.SheetNames;
+        let detectedPeriod = '';
+
+        for (const sheetName of sheetNames) {
+            const ws = wb.Sheets[sheetName];
+            if (!ws) continue;
+
+            // Find date header row and name column
+            // Expect row 5 to have date headers (day numbers) starting from col D
+            // and col B to have names starting from row 6
+            const dateColumns = {}; // col letter → day number
+
+            // Scan row 5 for date numbers
+            for (let c = 3; c <= 34; c++) { // D=3 (0-indexed) to AH=33
+                const colLetter = XLSX.utils.encode_col(c);
+                const cellAddr = colLetter + '5';
+                const cell = ws[cellAddr];
+                if (cell && typeof cell.v === 'number' && cell.v >= 1 && cell.v <= 31) {
+                    dateColumns[c] = cell.v;
+                }
+            }
+
+            if (Object.keys(dateColumns).length === 0) continue;
+
+            // Detect period from title cell (typically C2)
+            if (!detectedPeriod) {
+                const titleCell = ws['C2'];
+                if (titleCell && typeof titleCell.v === 'string') {
+                    const m = titleCell.v.match(/(\d{4})\s*[\/年]\s*(\d{1,2})\s*月/);
+                    if (m) detectedPeriod = `${m[1]}年${m[2]}月度`;
+                }
+            }
+
+            // Determine month boundary: days >= 26 are previous month
+            // Figure out which months from the date sequence
+            const dayValues = Object.values(dateColumns);
+            const hasHighDays = dayValues.some(d => d >= 26);
+            const hasLowDays = dayValues.some(d => d <= 25);
+
+            // Extract period month from title
+            let periodMonth = 0;
+            if (detectedPeriod) {
+                const pm = detectedPeriod.match(/(\d{1,2})月/);
+                if (pm) periodMonth = parseInt(pm[1]);
+            }
+            const prevMonth = periodMonth > 1 ? periodMonth - 1 : 12;
+
+            // Scan employee rows (row 6+)
+            for (let r = 6; r <= 50; r++) {
+                const nameCell = ws[XLSX.utils.encode_col(1) + r]; // col B = index 1
+                if (!nameCell || !nameCell.v) continue;
+
+                const rawName = String(nameCell.v).trim();
+                if (!rawName || SKIP_NAMES.has(rawName)) continue;
+
+                const norm = normalizeName(rawName);
+                if (!norm) continue;
+
+                if (!persons[norm]) {
+                    persons[norm] = { displayName: rawName, stores: new Set(), dates: {}, totalHours: 0 };
+                }
+                persons[norm].stores.add(sheetName.trim());
+
+                for (const [colIdx, day] of Object.entries(dateColumns)) {
+                    const cellAddr = XLSX.utils.encode_col(parseInt(colIdx)) + r;
+                    const cell = ws[cellAddr];
+                    if (!cell || cell.v === null || cell.v === undefined) continue;
+                    const hours = parseFloat(cell.v);
+                    if (isNaN(hours) || hours <= 0) continue;
+
+                    // Determine month for this day
+                    const month = (day >= 26) ? prevMonth : periodMonth;
+                    const dateKey = `${month}/${day}`;
+
+                    if (!persons[norm].dates[dateKey]) {
+                        persons[norm].dates[dateKey] = 0;
+                    }
+                    persons[norm].dates[dateKey] += hours;
+                    persons[norm].totalHours += hours;
+                }
+            }
+        }
+
+        // Build results
+        const employees = [];
+        for (const [norm, info] of Object.entries(persons)) {
+            const dateKeys = Object.keys(info.dates);
+            const uniqueDays = dateKeys.length;
+
+            // Parse and sort dates
+            const parsedDates = dateKeys.map(dk => {
+                const [m, d] = dk.split('/').map(Number);
+                return { month: m, day: d };
+            }).sort((a, b) => a.month - b.month || a.day - b.day);
+
+            const dateStr = formatDates(parsedDates);
+            const stores = [...info.stores].sort();
+            const isMulti = stores.length > 1;
+
+            employees.push({
+                name: info.displayName,
+                days: uniqueDays,
+                hours: Math.round(info.totalHours * 10) / 10,
+                stores: stores.join(', '),
+                dates: dateStr,
+                parsedDates,
+                is_multi: isMulti,
+            });
+        }
+
+        employees.sort((a, b) => {
+            if (a.is_multi !== b.is_multi) return a.is_multi ? -1 : 1;
+            return a.name.localeCompare(b.name, 'ja');
+        });
+
+        const multiCount = employees.filter(e => e.is_multi).length;
+
+        // Determine date range
+        let allDates = [];
+        employees.forEach(e => allDates.push(...e.parsedDates));
+        allDates.sort((a, b) => a.month - b.month || a.day - b.day);
+        const dateRange = allDates.length > 0
+            ? `${allDates[0].month}/${allDates[0].day} 〜 ${allDates[allDates.length-1].month}/${allDates[allDates.length-1].day}`
+            : '';
+
+        return {
+            employees,
+            summary: {
+                total: employees.length,
+                multi: multiCount,
+                sheets: sheetNames.length,
+                period: detectedPeriod || '-',
+                dateRange,
+            }
+        };
+    }
+
+    function formatDates(parsedDates) {
+        if (!parsedDates.length) return '';
+        const parts = [];
+        let currentMonth = null;
+        for (const { month, day } of parsedDates) {
+            if (month !== currentMonth) {
+                parts.push(`${month}/${day}`);
+                currentMonth = month;
+            } else {
+                parts.push(String(day));
+            }
+        }
+        return parts.join('.');
+    }
+
+    // ─── Render ───
+    function renderResults(data) {
+        document.getElementById('totalPersons').textContent = data.summary.total;
+        document.getElementById('multiCount').textContent = data.summary.multi;
+        document.getElementById('sheetCount').textContent = data.summary.sheets;
+        document.getElementById('periodText').textContent = data.summary.period;
+        renderSummaryTable(data.employees);
+        renderDatesTable(data.employees);
+    }
+
+    function renderSummaryTable(results) {
+        document.getElementById('summaryBody').innerHTML = results.map((r, i) => `
+            <tr class="${r.is_multi ? 'multi' : ''}">
+                <td class="text-center">${i + 1}</td>
+                <td>${esc(r.name)} ${r.is_multi ? '<span class="badge-multi">複数店舗</span>' : ''}</td>
+                <td class="text-center"><strong>${r.days}</strong> 日</td>
+                <td class="text-right">${r.hours} h</td>
+                <td>${esc(r.stores)}</td>
+            </tr>
+        `).join('');
+    }
+
+    function renderDatesTable(results) {
+        const sorted = [...results].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+        document.getElementById('datesBody').innerHTML = sorted.map((r, i) => `
+            <tr>
+                <td class="text-center">${i + 1}</td>
+                <td>${esc(r.name)}</td>
+                <td class="text-center"><strong>${r.days}</strong></td>
+                <td class="date-text" id="dates-${i}">${esc(r.dates)}</td>
+                <td class="text-center">
+                    <button class="copy-btn" onclick="copyDates(${i}, this)">コピー</button>
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    // ─── Copy ───
+    function copyDates(index, btn) {
+        const el = document.getElementById('dates-' + index);
+        navigator.clipboard.writeText(el.textContent).then(() => {
+            btn.textContent = 'OK!';
+            btn.classList.add('copied');
+            setTimeout(() => { btn.textContent = 'コピー'; btn.classList.remove('copied'); }, 1500);
+        });
+    }
+
+    // ─── Tabs ───
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById(btn.dataset.tab).classList.add('active');
+        });
+    });
+
+    // ─── Search ───
+    document.getElementById('searchSummary').addEventListener('input', e => {
+        const q = e.target.value.trim();
+        renderSummaryTable(q ? allResults.filter(r => r.name.includes(q)) : allResults);
+    });
+    document.getElementById('searchDates').addEventListener('input', e => {
+        const q = e.target.value.trim();
+        renderDatesTable(q ? allResults.filter(r => r.name.includes(q)) : allResults);
+    });
+
+    // ─── Reset ───
+    document.getElementById('btnReset').addEventListener('click', () => {
+        resultsSection.classList.remove('show');
+        uploadSection.style.display = 'block';
+        fileInfo.classList.remove('show');
+        fileInput.value = '';
+    });
+
+    // ─── Excel Download ───
+    document.getElementById('btnDownload').addEventListener('click', () => {
+        if (!allResults.length) return;
+
+        const wb = XLSX.utils.book_new();
+
+        // Sheet 1: 出勤日数集計
+        const summaryData = [['No.', '名前', '出勤日数', '出勤時間合計', '勤務店舗', '複数店舗']];
+        allResults.forEach((r, i) => {
+            summaryData.push([i + 1, r.name, r.days, r.hours, r.stores, r.is_multi ? '★' : '']);
+        });
+        const ws1 = XLSX.utils.aoa_to_sheet(summaryData);
+        ws1['!cols'] = [{ wch: 5 }, { wch: 18 }, { wch: 10 }, { wch: 12 }, { wch: 32 }, { wch: 8 }];
+        XLSX.utils.book_append_sheet(wb, ws1, '出勤日数集計');
+
+        // Sheet 2: おしらせ欄
+        const sorted = [...allResults].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+        const datesData = [['No.', '名前', '出勤日数', 'おしらせ欄（出勤日）']];
+        sorted.forEach((r, i) => {
+            datesData.push([i + 1, r.name, r.days, r.dates]);
+        });
+        const ws2 = XLSX.utils.aoa_to_sheet(datesData);
+        ws2['!cols'] = [{ wch: 5 }, { wch: 18 }, { wch: 10 }, { wch: 80 }];
+        XLSX.utils.book_append_sheet(wb, ws2, 'おしらせ欄用出勤日');
+
+        XLSX.writeFile(wb, '出勤日数集計.xlsx');
+    });
+
+    function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+    </script>
+</body>
+</html>
